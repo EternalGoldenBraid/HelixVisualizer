@@ -1,0 +1,2 @@
+[console_scripts]
+helix-viz = helix_viz.main:main

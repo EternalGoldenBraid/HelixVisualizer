@@ -1,0 +1,29 @@
+Metadata-Version: 2.4
+Name: helix-viz
+Version: 0.1.0
+Summary: Standalone guitar pitch helix visualizer
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=2.0.0
+Requires-Dist: PyQt5>=5.15.0
+Requires-Dist: pyqtgraph>=0.13.0
+Requires-Dist: PyOpenGL>=3.1.7
+Requires-Dist: sounddevice>=0.5.2
+Requires-Dist: librosa>=0.11.0
+
+# Helix Visualizer
+
+Standalone guitar pitch helix visualizer extracted from the AudioViz project.
+
+## Run
+
+```bash
+cd helix_visualizer
+uv run python main.py
+```
+
+## Notes
+
+- Device selection is persisted to `outputs/audio_devices.json`.
+- The app listens to live audio input and plots the dominant detected pitch on the helix.
+- This folder is structured so it can be moved into a separate git repository directly.
