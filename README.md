@@ -1,32 +1,28 @@
 # Helix Visualizer
 
-Standalone guitar pitch helix visualizer extracted from the AudioViz project.
+Helix Visualizer is a realtime guitar pitch visualizer.  
+Its primary use is to listen to your guitar input and display notes in 3D on a helix.
 
-## Run
+## Quick Start (User-Facing)
+
+From the project root:
 
 ```bash
-cd helix_visualizer
-uv run python main.py
+uv run helix-viz ui
 ```
 
-## Probe (No UI)
+What happens on first run:
 
-Print helix coordinates for specific frequencies without launching Qt:
+- You select an audio input device.
+- The selection is saved to `outputs/audio_devices.json`.
+- The UI starts and visualizes dominant detected pitches from your guitar input.
 
-```bash
-uv run python -m helix_viz.main probe --freq 82.41 --freq 110 --freq 440
-```
+## Realtime UI Tuning
 
-This returns CSV output with `freq_hz,x,y,z,status`, where status is `ok` when the note is within the configured guitar range.
-The circle orientation is rotated so `D` is at the bottom for symmetric whole-tone spacing around that axis.
-Recent played-note memory is rendered on the helix in full 3D (octave-aware), with fading nodes, edges, and filled surfaces.
-
-## UI Tuning via CLI
-
-Tune jitter filtering without code edits:
+If your environment is noisy or pitch feels jumpy, tune the UI filters:
 
 ```bash
-uv run python -m helix_viz.main ui \
+uv run helix-viz ui \
   --min-rms-threshold 0.01 \
   --min-peak-prominence-ratio 12 \
   --frequency-smoothing-alpha 0.24 \
@@ -35,14 +31,39 @@ uv run python -m helix_viz.main ui \
   --edge-window-ms 180
 ```
 
-## Unit Tests
+## Optional: Timeline Preview and Video Export
+
+Besides live microphone mode, you can also feed known note timelines (MIDI or JSON note spans):
+
+- `preview`: play timeline in the realtime Qt/OpenGL UI (no microphone required)
+- `render-gl`: export video through the OpenGL visualizer (best visual match to UI)
+- `render`: deterministic CPU renderer for testing and CI
+
+Example:
+
+```bash
+uv run helix-viz preview --midi assets/simple_scale.mid
+uv run helix-viz render-gl --midi assets/simple_scale.mid --output outputs/demo_gl.mp4
+```
+
+`assets/simple_scale.mid` is included as a basic fixture.
+
+## Developer and CLI Docs
+
+Detailed CLI command reference, verification workflows, and test-oriented endpoints are documented in:
+
+- `docs/cli-testing.md`
+
+## Run Tests
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-## Notes
+## License
 
-- Device selection is persisted to `outputs/audio_devices.json`.
-- The app listens to live audio input and plots the dominant detected pitch on the helix.
-- This folder is structured so it can be moved into a separate git repository directly.
+MIT. See `LICENSE`.
+
+## Credits
+
+Developed by Nicklas, with implementation support from OpenAI Codex (AI pair programmer).

@@ -7,6 +7,12 @@ import numpy as np
 
 @dataclass(frozen=True)
 class NoteEvent:
+    """Instantaneous note occurrence used for fading graph memory.
+
+    Unlike ``NoteSpan`` (which has duration), ``NoteEvent`` is a single point
+    in time used to build transient node/edge strength in the visual memory.
+    """
+
     timestamp_s: float
     midi_note: int
 
