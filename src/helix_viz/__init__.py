@@ -1,6 +1,7 @@
 __all__ = [
     "audio_devices",
     "audio_processor",
+    "configuration",
     "guitar_profiles",
     "main",
     "midi_file",

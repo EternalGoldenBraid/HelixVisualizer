@@ -12,7 +12,13 @@ This document covers the command-line endpoints that are useful for:
 - `helix-viz preview`: realtime UI driven by MIDI/JSON timelines
 - `helix-viz render-gl`: video export using OpenGL Qt visualizer
 - `helix-viz render`: deterministic CPU renderer (CI-friendly)
+- `helix-viz play`: synthesized audio playback from MIDI/JSON timelines
 - `helix-viz probe`: print helix coordinates for selected frequencies
+
+Most commands support:
+
+- `--config <path.json>` to load parameters
+- `--save-config <path.json>` to save resolved parameters
 
 ## Realtime Timeline Preview
 
@@ -20,6 +26,18 @@ Play MIDI in the same OpenGL UI path as live mode:
 
 ```bash
 uv run helix-viz preview --midi assets/simple_scale.mid --speed 1.0
+```
+
+MIDI preview plays synthesized audio by default. Disable with:
+
+```bash
+uv run helix-viz preview --midi assets/simple_scale.mid --no-audio
+```
+
+Profile example:
+
+```bash
+uv run helix-viz preview --midi assets/simple_scale.mid --config configs/preview.json
 ```
 
 Use JSON note spans instead:
@@ -88,6 +106,23 @@ Output columns:
 - `freq_hz`
 - `x,y,z`
 - `status` (`ok` or `out_of_range`)
+
+## Timeline Audio Playback
+
+Play MIDI as simple synthesized audio:
+
+```bash
+uv run helix-viz play --midi assets/simple_scale.mid
+```
+
+Generate WAV without playback:
+
+```bash
+uv run helix-viz play \
+  --midi assets/simple_scale.mid \
+  --output-wav outputs/simple_scale.wav \
+  --no-playback
+```
 
 ## Test Suite
 

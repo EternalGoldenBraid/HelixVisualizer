@@ -1,0 +1,13 @@
+{
+  "audio_processing": {
+    "frequency_smoothing_alpha": 0.28,
+    "min_peak_prominence_ratio": 10.0,
+    "min_rms_threshold": 0.008
+  },
+  "ui": {
+    "edge_window_ms": 220.0,
+    "face_opacity": 0.16,
+    "memory_fade_seconds": 2.6,
+    "min_event_interval_ms": 80.0
+  }
+}

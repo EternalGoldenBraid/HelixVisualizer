@@ -20,7 +20,8 @@ def load_note_spans_json(path: str | Path) -> list[NoteSpan]:
                 end_s=float(item["end_s"]),
                 midi_note=int(item["midi_note"]),
                 velocity=int(item.get("velocity", 100)),
+                channel=int(item.get("channel", 0)),
             )
         )
-    spans.sort(key=lambda s: (s.start_s, s.midi_note, s.end_s))
+    spans.sort(key=lambda s: (s.start_s, s.channel, s.midi_note, s.end_s))
     return spans

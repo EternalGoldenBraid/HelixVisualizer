@@ -31,6 +31,8 @@ class AudioProcessor:
         self.current_top_k_frequencies: list[Optional[float]] = [None] * self.num_top_frequencies
         self.raw_input_queue: deque[np.ndarray] = deque(maxlen=64)
         self.audio_buffer = np.zeros((self.fft_size, max(1, self.input_channels)), dtype=np.float32)
+        self._recording_enabled = False
+        self._recording_chunks: list[np.ndarray] = []
 
         import sounddevice as sd
 
@@ -59,6 +61,8 @@ class AudioProcessor:
         if status:
             print(f"Input stream status: {status}")
         self.raw_input_queue.append(indata.copy())
+        if self._recording_enabled:
+            self._recording_chunks.append(indata[:, 0].copy())
 
     def process_pending_audio(self) -> None:
         while self.raw_input_queue:
@@ -115,6 +119,18 @@ class AudioProcessor:
         self._smoothed_dominant_frequency = None
         for i in range(self.num_top_frequencies):
             self.current_top_k_frequencies[i] = None
+
+    def start_recording_capture(self) -> None:
+        self._recording_chunks = []
+        self._recording_enabled = True
+
+    def stop_recording_capture(self) -> np.ndarray:
+        self._recording_enabled = False
+        if not self._recording_chunks:
+            return np.zeros((1,), dtype=np.float32)
+        audio = np.concatenate(self._recording_chunks).astype(np.float32, copy=False)
+        self._recording_chunks = []
+        return audio
 
     @staticmethod
     def compute_rms(samples: np.ndarray) -> float:

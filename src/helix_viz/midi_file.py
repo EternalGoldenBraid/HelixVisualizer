@@ -239,10 +239,18 @@ def load_midi_timeline(path: str | Path) -> MidiTimeline:
             del active[key]
         start_s = _ticks_to_seconds(start_tick, ticks_per_quarter, tempo_ticks, tempo_values, cumulative_s)
         end_s = _ticks_to_seconds(tick, ticks_per_quarter, tempo_ticks, tempo_values, cumulative_s)
-        spans.append(NoteSpan(start_s=start_s, end_s=end_s, midi_note=note, velocity=start_velocity))
+        spans.append(
+            NoteSpan(
+                start_s=start_s,
+                end_s=end_s,
+                midi_note=note,
+                velocity=start_velocity,
+                channel=channel,
+            )
+        )
 
     duration_s = _ticks_to_seconds(max_tick, ticks_per_quarter, tempo_ticks, tempo_values, cumulative_s)
-    for (_channel, note), queue in active.items():
+    for (channel, note), queue in active.items():
         for start_tick, start_velocity in queue:
             start_s = _ticks_to_seconds(
                 start_tick,
@@ -251,9 +259,17 @@ def load_midi_timeline(path: str | Path) -> MidiTimeline:
                 tempo_values,
                 cumulative_s,
             )
-            spans.append(NoteSpan(start_s=start_s, end_s=duration_s, midi_note=note, velocity=start_velocity))
+            spans.append(
+                NoteSpan(
+                    start_s=start_s,
+                    end_s=duration_s,
+                    midi_note=note,
+                    velocity=start_velocity,
+                    channel=channel,
+                )
+            )
 
-    spans.sort(key=lambda s: (s.start_s, s.midi_note, s.end_s))
+    spans.sort(key=lambda s: (s.start_s, s.channel, s.midi_note, s.end_s))
     if spans:
         duration_s = max(duration_s, max(span.end_s for span in spans))
 

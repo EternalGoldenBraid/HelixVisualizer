@@ -15,6 +15,7 @@ class NoteEvent:
 
     timestamp_s: float
     midi_note: int
+    source_id: int = 0
 
 
 def frequency_to_midi_note(freq_hz: float, a4_hz: float = 440.0) -> int:

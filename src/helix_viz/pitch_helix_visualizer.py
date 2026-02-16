@@ -1,4 +1,5 @@
 import time
+from collections import defaultdict
 from collections import deque
 from typing import List
 
@@ -28,6 +29,7 @@ class PitchHelixVisualizer(VisualizerBase):
         memory_fade_time_s: float = 2.6,
         min_event_interval_s: float = 0.08,
         edge_window_s: float = 0.22,
+        face_opacity: float = 1.0,
         parent: QtWidgets.QWidget = None,
     ):
         super().__init__(processor, parent=parent)
@@ -42,9 +44,22 @@ class PitchHelixVisualizer(VisualizerBase):
         self.memory_fade_time_s = float(memory_fade_time_s)
         self.min_event_interval_s = float(min_event_interval_s)
         self.edge_window_s = float(edge_window_s)
+        self.memory_face_opacity = float(face_opacity)
+        self.memory_edge_opacity = 0.0
+        self.camera_follow_note = False
+        self._camera_follow_spring = 0.045
+        self._camera_follow_damping = 0.93
+        self._camera_follow_momentum_gain = 0.85
+        self._camera_follow_azim = 45.0
+        self._camera_follow_elev = 60.0
+        self._camera_follow_angular_velocity = 0.0
+        self._camera_follow_last_midi_note: int | None = None
         self.note_events: deque[NoteEvent] = deque(maxlen=256)
         self._last_event_time_by_note: dict[int, float] = {}
-        self._memory_fill_mesh = None
+        self._memory_fill_meshes: dict[int, gl.GLMeshItem] = {}
+        self._external_note_events: list[NoteEvent] | None = None
+        self._source_color_map: dict[int, tuple[float, float, float]] = {}
+        self._external_now_s: float | None = None
 
         self.view = gl.GLViewWidget()
         layout = QtWidgets.QVBoxLayout(self)
@@ -62,6 +77,18 @@ class PitchHelixVisualizer(VisualizerBase):
         self.view.addItem(self.memory_edges_line)
         self.view.addItem(self.memory_nodes_scatter)
         self.view.addItem(self.scatter)
+
+    def set_external_timeline_events(
+        self,
+        note_events: list[NoteEvent] | None,
+        now_s: float | None = None,
+        source_color_map: dict[int, tuple[float, float, float]] | None = None,
+    ) -> None:
+        """Set externally generated memory events (e.g. MIDI channels in preview/render-gl)."""
+        self._external_note_events = note_events
+        self._external_now_s = now_s
+        if source_color_map is not None:
+            self._source_color_map = dict(source_color_map)
 
     def create_semitone_nodes(self) -> None:
         self.semitone_scatter = gl.GLScatterPlotItem()
@@ -108,7 +135,9 @@ class PitchHelixVisualizer(VisualizerBase):
         )
 
     def update_visualization(self) -> None:
-        now_s = time.monotonic()
+        now_s = self._external_now_s if self._external_note_events is not None else time.monotonic()
+        if now_s is None:
+            now_s = time.monotonic()
 
         dominant_freq = self.processor.current_top_k_frequencies[0]
         if dominant_freq is None:
@@ -119,51 +148,74 @@ class PitchHelixVisualizer(VisualizerBase):
             if self.min_freq <= dominant_freq <= self.max_freq:
                 points.append(self.frequency_to_xyz(dominant_freq))
                 colors.append((1.0, 0.2, 0.2, 1.0))
+                self._update_camera_follow(dominant_freq)
 
             if points:
                 self.scatter.setData(pos=np.array(points), color=np.array(colors), size=12.0)
             else:
                 self.scatter.setData(pos=np.zeros((0, 3)))
 
-        for freq in self.processor.current_top_k_frequencies:
-            if freq is None:
-                continue
-            if not (self.min_freq <= freq <= self.max_freq):
-                continue
-            midi_note = frequency_to_midi_note(freq)
-            prev_t = self._last_event_time_by_note.get(midi_note)
-            if prev_t is not None and (now_s - prev_t) < self.min_event_interval_s:
-                continue
-            self.note_events.append(NoteEvent(timestamp_s=now_s, midi_note=midi_note))
-            self._last_event_time_by_note[midi_note] = now_s
+        if self._external_note_events is None:
+            for freq in self.processor.current_top_k_frequencies:
+                if freq is None:
+                    continue
+                if not (self.min_freq <= freq <= self.max_freq):
+                    continue
+                midi_note = frequency_to_midi_note(freq)
+                prev_t = self._last_event_time_by_note.get(midi_note)
+                if prev_t is not None and (now_s - prev_t) < self.min_event_interval_s:
+                    continue
+                self.note_events.append(NoteEvent(timestamp_s=now_s, midi_note=midi_note, source_id=0))
+                self._last_event_time_by_note[midi_note] = now_s
 
-        while self.note_events and (now_s - self.note_events[0].timestamp_s) > self.memory_fade_time_s:
-            self.note_events.popleft()
+            while self.note_events and (now_s - self.note_events[0].timestamp_s) > self.memory_fade_time_s:
+                self.note_events.popleft()
+            events = list(self.note_events)
+        else:
+            events = list(self._external_note_events)
 
-        node_strength, edge_strength = build_fading_graph_state(
-            events=list(self.note_events),
-            now_s=now_s,
-            fade_time_s=self.memory_fade_time_s,
-            edge_window_s=self.edge_window_s,
-        )
+        events_by_source: dict[int, list[NoteEvent]] = defaultdict(list)
+        for ev in events:
+            events_by_source[ev.source_id].append(ev)
 
-        self._update_memory_nodes(node_strength)
-        self._update_memory_edges(edge_strength)
-        self._update_memory_fill(node_strength)
+        source_states: dict[int, tuple[dict[int, float], dict[tuple[int, int], float]]] = {}
+        for source_id, source_events in events_by_source.items():
+            node_strength, edge_strength = build_fading_graph_state(
+                events=source_events,
+                now_s=now_s,
+                fade_time_s=self.memory_fade_time_s,
+                edge_window_s=self.edge_window_s,
+            )
+            if node_strength or edge_strength:
+                source_states[source_id] = (node_strength, edge_strength)
+
+        self._update_memory_nodes(source_states)
+        self._update_memory_edges(source_states)
+        self._update_memory_fill(source_states)
 
     def _note_position(self, midi_note: int) -> np.ndarray:
         freq = midi_note_to_frequency(midi_note)
         return self.frequency_to_xyz(freq)
 
-    def _update_memory_nodes(self, node_strength: dict[int, float]) -> None:
+    def _color_for_source(self, source_id: int) -> tuple[float, float, float]:
+        default = (1.0, 0.62, 0.1)
+        return self._source_color_map.get(source_id, default)
+
+    def _update_memory_nodes(
+        self,
+        source_states: dict[int, tuple[dict[int, float], dict[tuple[int, int], float]]],
+    ) -> None:
         positions = []
         colors = []
         sizes = []
-        for midi_note, strength in node_strength.items():
-            pos = self._note_position(midi_note)
-            positions.append([float(pos[0]), float(pos[1]), float(pos[2])])
-            colors.append((1.0, 0.62, 0.1, 0.2 + 0.8 * strength))
-            sizes.append(5.0 + 14.0 * strength)
+        for source_id, (node_strength, _edge_strength) in source_states.items():
+            r, g, b = self._color_for_source(source_id)
+            for midi_note, strength in node_strength.items():
+                pos = self._note_position(midi_note)
+                positions.append([float(pos[0]), float(pos[1]), float(pos[2])])
+                node_alpha = float(np.clip(0.95 * (strength**1.35), 0.0, 1.0))
+                colors.append((r, g, b, node_alpha))
+                sizes.append(5.0 + 14.0 * strength)
         if not positions:
             self.memory_nodes_scatter.setData(pos=np.zeros((0, 3)))
             return
@@ -173,15 +225,21 @@ class PitchHelixVisualizer(VisualizerBase):
             size=np.array(sizes, dtype=np.float64),
         )
 
-    def _update_memory_edges(self, edge_strength: dict[tuple[int, int], float]) -> None:
+    def _update_memory_edges(
+        self,
+        source_states: dict[int, tuple[dict[int, float], dict[tuple[int, int], float]]],
+    ) -> None:
         line_points = []
         line_colors = []
-        for (a, b), strength in edge_strength.items():
-            pa = self._note_position(a)
-            pb = self._note_position(b)
-            color = (1.0, 0.45, 0.08, 0.08 + 0.55 * strength)
-            line_points.extend([pa.tolist(), pb.tolist()])
-            line_colors.extend([color, color])
+        for source_id, (_node_strength, edge_strength) in source_states.items():
+            r, g, b = self._color_for_source(source_id)
+            for (a, bnote), strength in edge_strength.items():
+                pa = self._note_position(a)
+                pb = self._note_position(bnote)
+                edge_alpha = float(np.clip(0.70 * (strength**1.45) * self.memory_edge_opacity, 0.0, 1.0))
+                color = (r, g, b, edge_alpha)
+                line_points.extend([pa.tolist(), pb.tolist()])
+                line_colors.extend([color, color])
         if not line_points:
             self.memory_edges_line.setData(pos=np.zeros((0, 3)))
             return
@@ -192,41 +250,77 @@ class PitchHelixVisualizer(VisualizerBase):
             mode="lines",
         )
 
-    def _update_memory_fill(self, node_strength: dict[int, float]) -> None:
-        active = [(note, w) for note, w in node_strength.items() if w > 0.12]
-        if len(active) < 3:
-            if self._memory_fill_mesh is not None:
-                self.view.removeItem(self._memory_fill_mesh)
-                self._memory_fill_mesh = None
+    def _update_memory_fill(
+        self,
+        source_states: dict[int, tuple[dict[int, float], dict[tuple[int, int], float]]],
+    ) -> None:
+        active_sources = set(source_states.keys())
+        stale_sources = set(self._memory_fill_meshes.keys()) - active_sources
+        for source_id in stale_sources:
+            self.view.removeItem(self._memory_fill_meshes[source_id])
+            del self._memory_fill_meshes[source_id]
+
+        for source_id, (node_strength, _edge_strength) in source_states.items():
+            active = [(note, w) for note, w in node_strength.items() if w > 0.015]
+            if len(active) < 3:
+                if source_id in self._memory_fill_meshes:
+                    self.view.removeItem(self._memory_fill_meshes[source_id])
+                    del self._memory_fill_meshes[source_id]
+                continue
+
+            active.sort(key=lambda x: x[0])
+            boundary = []
+            for midi_note, _strength in active:
+                pos = self._note_position(midi_note)
+                boundary.append([float(pos[0]), float(pos[1]), float(pos[2])])
+
+            center = np.mean(np.array(boundary, dtype=np.float64), axis=0)
+            vertices = np.vstack([np.array([center]), np.array(boundary, dtype=np.float64)])
+            faces = []
+            for i in range(1, len(boundary) + 1):
+                j = 1 if i == len(boundary) else i + 1
+                faces.append([0, i, j])
+            faces = np.array(faces, dtype=np.int32)
+
+            avg_strength = float(np.mean([w for _, w in active]))
+            r, g, b = self._color_for_source(source_id)
+            alpha = float(np.clip(0.42 * (avg_strength**1.6) * self.memory_face_opacity, 0.0, 1.0))
+            face_color = np.array([r, g, b, alpha], dtype=np.float32)
+            face_colors = np.repeat(face_color[np.newaxis, :], len(faces), axis=0)
+
+            if source_id in self._memory_fill_meshes:
+                self.view.removeItem(self._memory_fill_meshes[source_id])
+                del self._memory_fill_meshes[source_id]
+            mesh = gl.GLMeshItem(
+                vertexes=vertices,
+                faces=faces,
+                faceColors=face_colors,
+                smooth=False,
+                # Keep mesh border hidden so only decaying face alpha is visible.
+                drawEdges=False,
+                drawFaces=True,
+            )
+            mesh.setGLOptions("translucent")
+            self._memory_fill_meshes[source_id] = mesh
+            self.view.addItem(mesh)
+
+    def _update_camera_follow(self, dominant_freq: float) -> None:
+        if not self.camera_follow_note:
+            self._camera_follow_angular_velocity = 0.0
+            self._camera_follow_last_midi_note = None
             return
+        midi_note = frequency_to_midi_note(dominant_freq)
+        prev_midi = self._camera_follow_last_midi_note
+        if prev_midi is not None and prev_midi != midi_note:
+            interval = midi_note - prev_midi
+            interval = int(np.clip(interval, -12, 12))
+            self._camera_follow_angular_velocity += interval * self._camera_follow_momentum_gain
+        self._camera_follow_last_midi_note = midi_note
 
-        active.sort(key=lambda x: x[0])
-        boundary = []
-        for midi_note, _strength in active:
-            pos = self._note_position(midi_note)
-            boundary.append([float(pos[0]), float(pos[1]), float(pos[2])])
-
-        center = np.mean(np.array(boundary, dtype=np.float64), axis=0)
-        vertices = np.vstack([np.array([center]), np.array(boundary, dtype=np.float64)])
-        faces = []
-        for i in range(1, len(boundary) + 1):
-            j = 1 if i == len(boundary) else i + 1
-            faces.append([0, i, j])
-        faces = np.array(faces, dtype=np.int32)
-
-        avg_strength = float(np.mean([w for _, w in active]))
-        face_color = np.array([1.0, 0.35, 0.08, 0.04 + 0.22 * avg_strength], dtype=np.float32)
-        face_colors = np.repeat(face_color[np.newaxis, :], len(faces), axis=0)
-
-        if self._memory_fill_mesh is not None:
-            self.view.removeItem(self._memory_fill_mesh)
-            self._memory_fill_mesh = None
-        self._memory_fill_mesh = gl.GLMeshItem(
-            vertexes=vertices,
-            faces=faces,
-            faceColors=face_colors,
-            smooth=False,
-            drawEdges=False,
-            drawFaces=True,
-        )
-        self.view.addItem(self._memory_fill_mesh)
+        target_azim = (midi_note % 12) * 30.0
+        delta = (target_azim - self._camera_follow_azim + 540.0) % 360.0 - 180.0
+        spring_accel = delta * self._camera_follow_spring
+        self._camera_follow_angular_velocity += spring_accel
+        self._camera_follow_angular_velocity *= self._camera_follow_damping
+        self._camera_follow_azim = (self._camera_follow_azim + self._camera_follow_angular_velocity) % 360.0
+        self.view.setCameraPosition(azimuth=self._camera_follow_azim, elevation=self._camera_follow_elev)
